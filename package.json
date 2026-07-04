@@ -1,0 +1,48 @@
+{
+  "name": "mastra-base-turso",
+  "version": "1.0.0",
+  "description": "Zero-Docker libSQL/Turso variant of mastra-base — a Mastra agent starter on LibSQLStore (file: local, libsql:// prod), fastembed, JWT auth, remote Dolt ledger, and CI. npm install && npm run dev, no containers.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "mastra start",
+    "typecheck": "tsc --noEmit",
+    "eval": "node --env-file=.env --import tsx/esm scripts/eval.ts",
+    "score:list": "mastra scorers list"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.58",
+    "@mastra/auth": "^1.1.1",
+    "@mastra/clickhouse": "^1.11.0",
+    "@mastra/core": "^1.47.0",
+    "@mastra/editor": "^0.13.2",
+    "@mastra/evals": "^1.5.0",
+    "@mastra/fastembed": "^1.2.0",
+    "@mastra/libsql": "^1.15.0",
+    "@mastra/loggers": "^1.2.0",
+    "@mastra/mcp": "^1.12.0",
+    "@mastra/memory": "^1.21.2",
+    "@mastra/observability": "^1.15.2",
+    "@supabase/supabase-js": "^2.105.1",
+    "mysql2": "^3.22.3",
+    "zod": "^4.4.2"
+  },
+  "devDependencies": {
+    "@mastra/deployer-cloudflare": "^1.2.2",
+    "@mastra/deployer-netlify": "^1.2.2",
+    "@mastra/deployer-vercel": "^1.2.2",
+    "@types/node": "^25.6.0",
+    "mastra": "^1.16.0",
+    "supabase": "^2.98.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
