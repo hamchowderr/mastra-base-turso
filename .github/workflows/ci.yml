@@ -37,7 +37,7 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           MASTRA_TELEMETRY_DISABLED: '1'
-          APP_SECRET: ${{ secrets.CI_APP_SECRET }}
+          APP_SECRET: ${{ secrets.CI_APP_SECRET || 'ci-only-placeholder-not-a-real-secret-0000' }}
           SUPABASE_URL: https://stub.supabase.co
           SUPABASE_ANON_KEY: stub
           SUPABASE_SERVICE_ROLE_KEY: stub
@@ -90,7 +90,7 @@ jobs:
           AIMOCK_URL: http://127.0.0.1:4010
           OPENAI_BASE_URL: http://127.0.0.1:4010/v1
           MASTRA_TELEMETRY_DISABLED: '1'
-          APP_SECRET: ${{ secrets.CI_APP_SECRET }}
+          APP_SECRET: ${{ secrets.CI_APP_SECRET || 'ci-only-placeholder-not-a-real-secret-0000' }}
           SUPABASE_URL: https://stub.supabase.co
           SUPABASE_ANON_KEY: stub
           SUPABASE_SERVICE_ROLE_KEY: stub
