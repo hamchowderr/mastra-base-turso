@@ -70,7 +70,7 @@ npm run dev
 # → Studio at http://localhost:4111, API at http://localhost:4111/api
 ```
 
-Leave `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` blank. Storage is then created at `./mastra.db` on first boot. The first message that uses semantic recall downloads the local fastembed model (bge-small) once.
+Leave `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` blank. Storage is then a local libSQL file created on first boot, resolved against the working directory: `src/mastra/public/mastra.db` under `npm run dev`, `./mastra.db` for `npm run eval`. Both are gitignored. The first message that uses semantic recall downloads the local fastembed model (bge-small) once.
 
 To check that everything works, open Studio, pick the `leadIntake` agent, and send:
 
@@ -99,7 +99,7 @@ You should get back a JSON lead with every field filled in and `"urgency": "high
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TURSO_DATABASE_URL` | `file:./mastra.db` | Blank means a local file DB. Set `libsql://<db>.turso.io` for Turso Cloud |
+| `TURSO_DATABASE_URL` | `file:./mastra.db` | Blank means a local file DB, relative to the working directory (`src/mastra/public/` under `mastra dev`). Set `libsql://<db>.turso.io` for Turso Cloud |
 | `TURSO_AUTH_TOKEN` | none | Required with a Turso Cloud URL |
 | `EMBEDDING_MODEL` | local fastembed | Hosted embedder for semantic recall, e.g. `openai/text-embedding-3-small`. Use it on serverless/edge, where fastembed's native runtime can't load |
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD` | none | Route only observability traces to ClickHouse |
