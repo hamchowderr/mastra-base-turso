@@ -1,5 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
+import { env } from '../../lib/env';
 import { createDefaultMemory } from '../lib/memory';
 import { z } from 'zod';
 
@@ -24,7 +25,9 @@ import { defaultInputProcessors, defaultOutputProcessors } from '../lib/processo
  *   Endpoint: POST /api/agents/leadIntake/generate
  *
  * Env vars required:
- *   - ANTHROPIC_API_KEY (default model)
+ *   - MODEL (optional; defaults to anthropic/claude-sonnet-4-6)
+ *   - the API key for MODEL's provider (ANTHROPIC_API_KEY, OPENAI_API_KEY,
+ *     or GOOGLE_GENERATIVE_AI_API_KEY)
  *
  * How to test:
  *   curl -X POST http://localhost:4111/api/agents/leadIntake/generate \
@@ -94,7 +97,8 @@ Output rules (strictly enforced):
 - Never write any text before or after the JSON — no "Let me...", no "Got it!", no "Here is...", no commentary of any kind.
 - Never narrate tool calls. Call tools silently; they produce no visible output to the user.
 - If information is missing, still return the JSON with null fields. Do not ask follow-up questions.`,
-  model: 'anthropic/claude-sonnet-4-6',
+  // Model-router string from env, so the provider is a config change, not a code change.
+  model: env.MODEL,
   tools: { validateEmail },
   memory: createDefaultMemory(),
   // Shared safety/hygiene baseline (UnicodeNormalizer + TokenLimiter active;
