@@ -2,13 +2,16 @@ import { createHallucinationScorer, createPromptAlignmentScorerLLM } from '@mast
 import { createScorer } from '@mastra/core/evals';
 import { getUserMessageFromRunInput, getAssistantMessageFromRunOutput } from '@mastra/evals/scorers/utils';
 import { z } from 'zod';
+import { env } from '../../lib/env';
+
+// Judges run on the same MODEL as the agent, so one provider key covers both.
 
 export const hallucinationScorer = createHallucinationScorer({
-  model: 'anthropic/claude-sonnet-4-6',
+  model: env.MODEL,
 });
 
 export const promptAlignmentScorer = createPromptAlignmentScorerLLM({
-  model: 'anthropic/claude-sonnet-4-6',
+  model: env.MODEL,
 });
 
 export const urgencyScorer = createScorer({
@@ -17,7 +20,7 @@ export const urgencyScorer = createScorer({
   description: 'Verifies the agent inferred urgency level correctly from tone',
   type: 'agent',
   judge: {
-    model: 'anthropic/claude-sonnet-4-6',
+    model: env.MODEL,
     instructions:
       'You evaluate whether an AI agent correctly inferred urgency from the tone of a lead message. ' +
       'High urgency = explicit deadline, frustration, "URGENT", "production down", "now", etc. ' +

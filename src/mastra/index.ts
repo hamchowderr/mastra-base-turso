@@ -16,6 +16,7 @@ import { MastraEditor } from '@mastra/editor';
 import { MCPServer } from '@mastra/mcp';
 import { MastraJwtAuth } from '@mastra/auth';
 import { leadIntakeAgent } from './agents/_example';
+import { leadRoutingWorkflow } from './workflows/lead-routing';
 import { hallucinationScorer, promptAlignmentScorer, urgencyScorer } from './scorers/_example.scorers';
 import { doltTools } from './tools/dolt';
 import { ensureDatabase, doltConfigured } from './lib/dolt';
@@ -77,6 +78,7 @@ const serverConfig = env.MASTRA_JWT_SECRET
 export const mastra = new Mastra({
   ...(serverConfig ? { server: serverConfig } : {}),
   agents: { leadIntake: leadIntakeAgent },
+  workflows: { leadRouting: leadRoutingWorkflow },
   scorers: { hallucinationScorer, promptAlignmentScorer, urgencyScorer },
   mcpServers: { baseMcp: mcpServer },
   storage,

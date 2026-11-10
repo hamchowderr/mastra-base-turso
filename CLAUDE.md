@@ -52,18 +52,26 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+npm install
+cp .env.example .env   # set APP_SECRET + one provider key; TURSO_* blank = local file DB
+npm run dev            # Studio + API on :4111 (long-running)
+npm run typecheck      # tsc --noEmit over src/ and scripts/
+npm run build          # mastra build
+npm run eval           # eval gate; USE_AIMOCK=true with AIMock running = free
 ```
+
+No unit-test runner or linter is configured.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+A Mastra starter: one example agent (`leadIntake`, `src/mastra/agents/_example.ts`),
+one workflow (`leadRouting`, `src/mastra/workflows/lead-routing.ts`), scorers, and
+an MCP server, wired in `src/mastra/index.ts`. Storage is a single libSQL store
+(local file by default, Turso Cloud via `TURSO_*`); the model comes from the
+`MODEL` env var.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+Follow `AGENTS.md`: boot order, all env through `src/lib/env.ts`, agent/workflow/
+scorer file conventions, storage, and the things to never do.

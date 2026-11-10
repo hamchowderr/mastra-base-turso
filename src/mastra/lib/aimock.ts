@@ -23,8 +23,11 @@ export function configureAIMock(): void {
   process.env.ANTHROPIC_BASE_URL = `${base}/v1`;
   process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? 'mock';
 
-  // Google Gemini
-  process.env.GOOGLE_GENERATIVE_AI_BASE_URL = base;
+  // Google Gemini — Mastra's model router reads <PROVIDER>_BASE_URL at call time
+  // (GOOGLE_BASE_URL for "google/..."), and @ai-sdk/google's default base ends in
+  // /v1beta, so point it at {base}/v1beta where AIMock serves Gemini.
+  process.env.GOOGLE_BASE_URL = `${base}/v1beta`;
+  process.env.GOOGLE_GENERATIVE_AI_BASE_URL = `${base}/v1beta`;
   process.env.GOOGLE_GENERATIVE_AI_API_KEY =
     process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? 'mock';
 
