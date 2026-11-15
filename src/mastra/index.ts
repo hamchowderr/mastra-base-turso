@@ -72,7 +72,14 @@ const storage = env.CLICKHOUSE_URL
 // declares its own top-level `server`, which collides in the bundler ("symbol
 // 'server' has already been declared"). `mastra build` doesn't hit it.
 const serverConfig = env.MASTRA_JWT_SECRET
-  ? { auth: new MastraJwtAuth({ secret: env.MASTRA_JWT_SECRET }) }
+  ? {
+      auth: new MastraJwtAuth({ secret: env.MASTRA_JWT_SECRET }),
+      // Core 1.83 serves the built-in MCP server at /api/mcp in production
+      // whenever `server.auth` is set, with every toolset by default —
+      // memory/observability would expose every user's threads and traces.
+      // Limit it to agents and workflows.
+      mcp: { toolsets: ['agents', 'workflows'] as ('agents' | 'workflows')[] },
+    }
   : undefined;
 
 export const mastra = new Mastra({
