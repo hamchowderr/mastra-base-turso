@@ -59,11 +59,19 @@ Every agent file must export:
 1. A named Zod schema (e.g. `LeadSchema`) and its inferred type
 2. The agent instance with `id`, `name`, `instructions`, `model`, and `scorers`
 
-Model string format: `anthropic/claude-sonnet-4-6` (provider/model-id).
+Model: set `model: env.MODEL`. `MODEL` is a Mastra model-router string (`provider/model-id`, e.g. `anthropic/claude-sonnet-4-6`, `openai/gpt-5.5`, `google/gemini-3.5-flash`) validated in `src/lib/env.ts` and defaulting to `anthropic/claude-sonnet-4-6`. Hard-code a different string only when one agent genuinely needs its own model. Scorer judges use `env.MODEL` too.
 
 Scorers are declared inline on the agent. Scorer implementations live in `src/mastra/scorers/`. Every agent should have at least a hallucination scorer.
 
 Tools used only by one agent live inline in that agent's file. Shared tools go in `src/mastra/tools/`.
+
+---
+
+## Workflow Conventions
+
+File naming: `src/mastra/workflows/<kebab-name>.ts`. Build with `createWorkflow` / `createStep` from `@mastra/core/workflows`, with Zod `inputSchema`/`outputSchema` on the workflow and every step, and `.commit()` at the end. Register each workflow in the `workflows` field of the Mastra constructor.
+
+Inside a step, resolve agents with `mastra.getAgent('<key>')` rather than importing the instance, so the registered agent (memory, storage, observability, editor overrides) runs. Keep deterministic business rules in plain exported functions (see `routeLead` in `workflows/lead-routing.ts`) so they can be reused without an LLM.
 
 ---
 
@@ -87,16 +95,20 @@ Note: `createPromptAlignmentScorerLLM` with `evaluationMode: 'system'` requires 
 
 ## Storage
 
-The Mastra instance uses a composite store:
-- **default domain** → `PostgresStore` (Supabase Postgres via `SUPABASE_DB_URL`)
-- **observability domain** → `DuckDBStore`
+One `LibSQLStore` (`@mastra/libsql`) holds every domain: memory, threads, messages, editor versions, scores and observability traces. Semantic-recall vectors use a `LibSQLVector` on the same database.
 
-Both require an explicit `id` field:
+- `TURSO_DATABASE_URL` blank → `file:./mastra.db`, a local file DB. Zero setup, no Docker.
+- `TURSO_DATABASE_URL=libsql://…` + `TURSO_AUTH_TOKEN` → Turso Cloud, for serverless/production (a local file is lost on ephemeral filesystems).
+- `CLICKHOUSE_URL` set → `MastraCompositeStore` routes only the observability domain to ClickHouse; everything else stays in libSQL.
+
+The store requires an explicit `id`:
 ```typescript
-new PostgresStore({ id: 'mastra-storage', connectionString: env.SUPABASE_DB_URL })
+new LibSQLStore({ id: 'mastra-storage', url: env.TURSO_DATABASE_URL, authToken: env.TURSO_AUTH_TOKEN })
 ```
 
-`DuckDBStore` requires glibc. Do not run it in Alpine-based containers — use `node:22-slim`.
+Supabase is not the framework store. `SUPABASE_*` are optional and only matter if you add a Supabase auth/RLS client yourself. Dolt (`DOLT_*`) is a separate, optional versioned-data ledger for business records, used by the tools in `src/mastra/tools/dolt.ts`.
+
+Embeddings default to local fastembed, whose `onnxruntime-node` binding needs glibc: keep Docker images on `node:22-slim`, not Alpine.
 
 ---
 
@@ -107,7 +119,7 @@ Every agent registered in `src/mastra/index.ts` is reachable through four standa
 - REST: `POST /api/agents/{agentId}/generate` (and `/stream`) — automatic
 - A2A agent card: `GET /api/.well-known/{agentId}/agent-card.json` — automatic
 - A2A execute: `POST /api/a2a/{agentId}` (JSON-RPC, `method: "message/send"`) — automatic
-- MCP: `POST /api/mcp/{serverId}/mcp` — via `MCPServer` instance in `src/mastra/index.ts`
+- MCP: `POST /api/mcp/{serverId}/mcp` — via `MCPServer` instance in `src/mastra/index.ts`. `@mastra/mcp` is 2.x, which serves only MCP protocol revision `2026-07-28` (stateless: no `initialize`, every request carries an `MCP-Protocol-Version` header and a `_meta` envelope). Clients on older revisions are rejected with `-32022 Unsupported protocol version`; use a 2026-07-28 client such as `MCPClient` from `@mastra/mcp` 2.x
 - Studio: `localhost:4111` UI — automatic via `mastra dev`
 
 Note: `/a2a/{agentId}` (without `/api` prefix) is caught by Studio's router and returns HTML. Always use the `/api/` prefix for A2A and MCP calls.
@@ -126,7 +138,7 @@ The `MastraEditor` instance gives non-developers a way to iterate on agent promp
 - **Never read `process.env` directly** — use `env` from `src/lib/env.ts`
 - **Never construct an AI SDK client before `configureAIMock()`** — AIMock will be bypassed silently
 - **Never set `ANTHROPIC_BASE_URL = AIMOCK_URL` bare** — `@ai-sdk/anthropic` appends `/messages`, so set it to `${AIMOCK_URL}/v1` to land at `/v1/messages` (where AIMock actually listens)
-- **Never change the Dockerfile base to `node:22-alpine`** or any musl-based image — DuckDB native binaries will SIGSEGV at runtime. If you genuinely need a smaller image, swap `DuckDBStore` for `LibSQLStore` in the observability domain in `src/mastra/index.ts` instead. See README "Deployment Notes".
+- **Never change the Dockerfile base to `node:22-alpine`** or any musl-based image — fastembed's `onnxruntime-node` binding needs glibc and won't load. If you need a smaller image, set `EMBEDDING_MODEL` to a hosted embedder first. See README "Deployment Notes".
 - **Never add a new env var without updating `.env.example`** — new devs won't know it exists
 - **Never skip the Zod schema for a new env var** — process will start with undefined values silently
 - **Never import from `src/mastra/` in `src/lib/`** — creates circular dependency risk
@@ -143,7 +155,8 @@ Stop and confirm with the user before making these changes:
 - Removing or renaming a scorer that's referenced in a dataset JSON
 - Downgrading a Mastra package version
 - Adding a new `domain` to the composite store
-- Any Supabase schema migrations
+- Any Dolt schema migrations
+- Pointing `TURSO_DATABASE_URL` at a shared or production database
 
 ---
 
@@ -153,7 +166,9 @@ Stop and confirm with the user before making these changes:
 npm run dev          # Start Studio at localhost:4111
 npm run typecheck    # Verify types before running
 npm run eval         # Run all eval cases; exits 0 on pass, 1 on fail
-npx supabase start   # Start local Supabase (Docker required)
+npm run build        # mastra build → .mastra/output/
 ```
 
-Eval runs with `USE_AIMOCK=false` hit the real Anthropic API and incur cost. Use `USE_AIMOCK=true` with AIMock running for free deterministic runs during development.
+There is no unit-test runner or linter; `typecheck` (which covers `scripts/` too), `build` and the AIMock-backed `eval` are the gates.
+
+Eval runs with `USE_AIMOCK=false` hit the real provider API for `MODEL` and incur cost. Use `USE_AIMOCK=true` with AIMock running for free deterministic runs during development.

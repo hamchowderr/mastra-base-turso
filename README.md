@@ -1,47 +1,134 @@
 # mastra-base-turso
 
-The **zero-Docker libSQL/Turso variant** of [mastra-base](https://github.com/hamchowderr/mastra-base). Same production-ready Mastra agent starter — one example agent, full eval pipeline, JWT auth, CI — but storage/vectors run on `LibSQLStore` (`file:` local, `libsql://` prod) instead of Postgres. Local dev is `npm install && npm run dev` with **no containers**: no Docker, no Supabase. Dolt ledger stays remote/optional; embeddings run local via fastembed. Edge-native (Cloudflare Workers) and a natural fit for Turso's database-per-tenant model.
+A production-minded Mastra agent starter that runs with **no Docker and no database server**: storage is libSQL, which is a local file in development and Turso Cloud in production.
 
-> Sibling of the Postgres line (`mastra-base`). Pick this variant when you want low-friction local dev, edge deploys, or per-agent isolated databases.
+## Overview
 
----
+This template gives you one working example of each Mastra primitive, wired the way a real deployment needs them:
 
-## Quickstart (2 minutes)
+- **Agent**: `leadIntake` turns unstructured text (an email, a call transcript, a form post) into a typed lead object (`LeadSchema`). It uses an inline tool, working memory, semantic recall, input/output processors and live scorers.
+- **Workflow**: `leadRouting` runs `leadIntake` with structured output, then routes the lead to a queue with a priority and follow-up SLA using plain TypeScript rules.
+- **Scorers and evals**: hallucination, prompt-alignment and urgency scorers, a 5-case dataset, and `npm run eval`, a CI gate that exits non-zero on regressions. It runs free and deterministically against [AIMock](https://github.com/CopilotKit/aimock).
+- **Storage**: one `LibSQLStore` for memory, threads, editor versions, scores and traces. Semantic-recall vectors live in the same database. Leave `TURSO_*` blank and it uses `file:./mastra.db` with zero setup.
+- **Any provider**: the `MODEL` env var picks the model, so Anthropic, OpenAI and Google all work without code changes.
+- **Reachability**: every agent is callable over REST, A2A and MCP, and in Mastra Studio, out of the box.
+- **Extras, all optional**: JWT auth for the API and Studio, a Dolt ledger for versioned business data, ClickHouse for high-volume traces, hosted Mastra Observe, and a Docker image.
 
-**Prerequisites**: Node 22+, an Anthropic API key. (No Docker, no Supabase — libSQL runs from a local `file:` DB.)
+This is the libSQL/Turso sibling of [mastra-base](https://github.com/hamchowderr/mastra-base), which uses Postgres. Pick this variant for low-friction local development, serverless or edge deploys, or one isolated database per agent.
 
-```bash
-# 1. Clone and install
-git clone <repo> my-agent && cd my-agent
-npm install
+### File structure
 
-# 2. Configure environment
-cp .env.example .env
-# Fill in: APP_SECRET, SUPABASE_*, ANTHROPIC_API_KEY
-
-# 3. Start local Supabase (first time only)
-npx supabase start
-
-# 4. Run
-npm run dev
-# → Mastra Studio at http://localhost:4111
+```
+src/
+├── lib/
+│   └── env.ts                    # Zod-validated env; exits on bad config
+└── mastra/
+    ├── index.ts                  # Entry point: env → AIMock → Mastra instance
+    ├── agents/
+    │   └── _example.ts           # leadIntake agent; copy this for new agents
+    ├── workflows/
+    │   └── lead-routing.ts       # leadRouting workflow (agent step + rules step)
+    ├── tools/
+    │   └── dolt.ts               # Shared Dolt tools (exposed over MCP)
+    ├── scorers/
+    │   ├── _example.scorers.ts   # hallucination, prompt-alignment, urgency
+    │   └── datasets/_example.json# Eval dataset: 5 cases + thresholds
+    └── lib/
+        ├── aimock.ts             # Routes LLM calls to AIMock when USE_AIMOCK=true
+        ├── memory.ts             # Shared memory policy (working memory + recall)
+        ├── embedder.ts           # fastembed locally, or a hosted embedder
+        ├── processors.ts         # Shared input/output processor baseline
+        └── dolt.ts               # Dolt connection + bootstrap
+scripts/
+├── eval.ts                       # Offline eval gate; exits 0/1 on thresholds
+└── bake-studio.mjs               # Bakes Studio config into the Docker build
+prompts/build-agent.md            # Prompt for generating a new agent with an AI assistant
+fixtures/lead-intake.json         # AIMock fixtures for the eval dataset
+.github/workflows/ci.yml          # typecheck → build + eval → docker
+Dockerfile, docker-compose.yml    # Production image + compose (with Dolt)
+AGENTS.md                         # Conventions for AI coding agents
 ```
 
-Chat with the `leadIntake` agent in Studio to verify everything works. Send:
+## Setup
+
+**Prerequisites**: Node 22.13 or newer, and an API key for one of Anthropic, OpenAI or Google. You don't need Docker, Postgres or Supabase.
+
+```bash
+npm install
+cp .env.example .env
+```
+
+Edit `.env` and set two things:
+
+1. `APP_SECRET`: at least 32 characters. Generate one with `openssl rand -hex 32`.
+2. One provider key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. If it isn't Anthropic, also set `MODEL` (see [Environment Variables](#environment-variables)).
+
+Then start the dev server:
+
+```bash
+npm run dev
+# → Studio at http://localhost:4111, API at http://localhost:4111/api
+```
+
+Leave `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` blank. Storage is then a local libSQL file created on first boot, resolved against the working directory: `src/mastra/public/mastra.db` under `npm run dev`, `./mastra.db` for `npm run eval`. Both are gitignored. The first message that uses semantic recall downloads the local fastembed model (bge-small) once.
+
+To check that everything works, open Studio, pick the `leadIntake` agent, and send:
 
 > Hi, this is John Smith from Acme Corp (john@acme.io). We need pricing for 50 seats by Friday.
 
-Expected: structured JSON output with all fields populated.
+You should get back a JSON lead with every field filled in and `"urgency": "high"`.
 
----
+## Environment Variables
 
-## Reachability
+`src/lib/env.ts` validates everything at boot and lists each problem before it exits. `.env.example` documents every variable.
 
-This template's agents are reachable through four standard protocols. Once the dev server is running (`npm run dev`), every registered agent can be called via:
+**Required**
+
+| Variable | Notes |
+|---|---|
+| `APP_SECRET` | At least 32 characters. `openssl rand -hex 32` |
+| One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` | Set the one that matches `MODEL`'s provider. Not needed when `USE_AIMOCK=true` |
+
+**Model**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MODEL` | `anthropic/claude-sonnet-4-6` | A Mastra model-router string, `provider/model-id`. Used by the agent, the workflow and the scorer judges. Examples: `openai/gpt-5.5`, `google/gemini-3.5-flash` |
+
+**Storage** (all optional)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TURSO_DATABASE_URL` | `file:./mastra.db` | Blank means a local file DB, relative to the working directory (`src/mastra/public/` under `mastra dev`). Set `libsql://<db>.turso.io` for Turso Cloud |
+| `TURSO_AUTH_TOKEN` | none | Required with a Turso Cloud URL |
+| `EMBEDDING_MODEL` | local fastembed | Hosted embedder for semantic recall, e.g. `openai/text-embedding-3-small`. Use it on serverless/edge, where fastembed's native runtime can't load |
+| `CLICKHOUSE_URL`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD` | none | Route only observability traces to ClickHouse |
+
+**Optional integrations**
+
+| Variable | Notes |
+|---|---|
+| `MASTRA_JWT_SECRET` | When set, every `/api/*` route and Studio require a Bearer JWT (HS256) signed with this secret. `/health` stays public |
+| `DOLT_HOST`, `DOLT_PORT`, `DOLT_USER`, `DOLT_PASSWORD`, `DOLT_DATABASE` | Dolt ledger for the Dolt tools. The app boots without it |
+| `MASTRA_PLATFORM_ACCESS_TOKEN` + `MASTRA_PROJECT_ID` | Also ship traces to hosted Mastra Observe |
+| `USE_AIMOCK`, `AIMOCK_URL` | Route every provider call to AIMock (default `http://localhost:4010`) |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Only if you add a Supabase auth/RLS client yourself. Mastra does not store anything in Supabase |
+| `LOG_LEVEL`, `NODE_ENV`, `MASTRA_TELEMETRY_DISABLED` | Standard runtime switches |
+
+## Usage
+
+### Studio
+
+Open `http://localhost:4111`. Studio gives you:
+
+- chat with each agent, and a runner for each workflow
+- a trace for every run
+- a metrics dashboard covering cost, latency and errors
+- the **Agent Editor**, where product teams and prompt engineers can change an agent's instructions, prompts and tools without a deploy. Changes are versioned with a draft/publish flow. On code-defined agents, `id`, `name` and `model` are read-only.
+
+Before you expose Studio publicly, set `MASTRA_JWT_SECRET`.
 
 ### REST API
-
-Direct HTTP calls. The fastest path for n8n, Make, VAPI, LiveKit, or any HTTP-aware system.
 
 ```bash
 curl -X POST http://localhost:4111/api/agents/leadIntake/generate \
@@ -49,11 +136,9 @@ curl -X POST http://localhost:4111/api/agents/leadIntake/generate \
   -d '{"messages":[{"role":"user","content":"Hi, I need a quote"}]}'
 ```
 
-For streaming responses, use `/stream` instead of `/generate`. Full OpenAPI spec at `/api/openapi.json`. Interactive docs at `/swagger-ui` (dev only).
+For a streaming response, call `/stream` instead of `/generate`. The OpenAPI spec is at `/api/openapi.json`, and interactive docs are at `/swagger-ui` in development.
 
-#### Working memory (persist context per user)
-
-Agents have **working memory** enabled (resource-scoped — see `src/mastra/lib/memory.ts`). For it to persist across a user's conversations, pass `memory.resource` (a stable user ID) and `memory.thread` (the conversation ID) in the body:
+**Working memory.** Memory is resource-scoped (see `src/mastra/lib/memory.ts`). To keep context across a user's conversations, pass a stable user ID as `memory.resource` and the conversation ID as `memory.thread`:
 
 ```bash
 curl -X POST http://localhost:4111/api/agents/leadIntake/generate \
@@ -64,14 +149,22 @@ curl -X POST http://localhost:4111/api/agents/leadIntake/generate \
   }'
 ```
 
-Without `memory.resource`, working memory falls back to thread-only (no cross-conversation persistence). Semantic recall is intentionally off. Storage uses the Mastra instance's Postgres (Supabase), which supports the `mastra_resources` table resource-scoping needs — no extra setup.
+If you leave out `memory.resource`, memory only lasts for the thread. Both working memory and semantic-recall vectors are stored in libSQL, which needs no extra setup.
 
-### A2A (Agent-to-Agent Protocol)
-
-Google's open standard for agent-to-agent communication. JSON-RPC over HTTP.
+### Workflow
 
 ```bash
-# Get agent card
+curl -X POST http://localhost:4111/api/workflows/leadRouting/start-async \
+  -H "Content-Type: application/json" \
+  -d '{"inputData":{"message":"Hi, this is John Smith from Acme Corp (john@acme.io). We need pricing for 50 seats by Friday."}}'
+```
+
+`result` holds the extracted `lead` plus `queue` (`sales`), `priority` (`p1`) and `followUpWithinHours` (`1`).
+
+### A2A (Agent-to-Agent protocol)
+
+```bash
+# Agent card
 curl http://localhost:4111/api/.well-known/leadIntake/agent-card.json
 
 # Send a message (JSON-RPC)
@@ -81,176 +174,126 @@ curl -X POST http://localhost:4111/api/a2a/leadIntake \
   -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"msg-1","role":"user","parts":[{"kind":"text","text":"Hi, I need a quote"}]}}}'
 ```
 
-Use this when another agent (in CrewAI, LangGraph, ADK, or any A2A-compatible framework) needs to delegate work to this template's agent.
+Always include the `/api` prefix. A bare `/a2a/...` path is caught by Studio's router and returns HTML.
 
-### MCP (Model Context Protocol)
+### MCP
 
-Anthropic's open standard for agent-tool integration. The template's MCPServer exposes every agent as a callable tool at `/api/mcp/base-mcp/mcp`.
+The `MCPServer` serves every agent as a tool named `ask_<agentId>`, plus the Dolt tools, at `http://localhost:4111/api/mcp/base-mcp/mcp`.
 
-To use from Claude Desktop, add to your `claude_desktop_config.json`:
+`@mastra/mcp` is **2.x**, and 2.x serves **only MCP protocol revision `2026-07-28`**. That revision is stateless: there is no `initialize` handshake, and every request carries an `MCP-Protocol-Version` header and a `_meta` envelope. A client on an older revision gets `-32022 Unsupported protocol version`. Connect with a client that speaks 2026-07-28, such as `MCPClient` from `@mastra/mcp` 2.x:
 
-```json
-{
-  "mcpServers": {
-    "template-mastra-base": {
-      "url": "http://localhost:4111/api/mcp/base-mcp/mcp"
-    }
-  }
-}
+```ts
+import { MCPClient } from '@mastra/mcp';
+
+const mcp = new MCPClient({
+  servers: { base: { url: new URL('http://localhost:4111/api/mcp/base-mcp/mcp') } },
+});
+console.log(Object.keys(await mcp.listTools())); // base_ask_leadIntake, base_doltQuery, ...
 ```
 
-Each agent appears as a tool named `ask_<agentId>`. Useful during development (call your own agent from your IDE) and for cross-system integration.
+If an IDE or desktop client only speaks an older revision, it can't connect until it adds support for 2026-07-28.
 
-### Studio (visual UI + Editor)
-
-Open `http://localhost:4111` in a browser. Studio provides:
-
-- Interactive chat with each agent
-- Trace inspection for every run
-- Metrics dashboard (cost, latency, errors)
-- **Agent Editor**: Non-developers iterate on agent instructions, prompts, and tools without touching code. Changes are versioned with draft/publish workflow.
-
-The Editor is intended for product teams, prompt engineers, or subject-matter experts to tune behavior between deploys. Code-defined agents have read-only `id`, `name`, and `model` fields; everything else is editable through Studio.
-
-For production deployment, secure Studio behind authentication. See [Mastra's auth docs](https://mastra.ai/docs/server/auth/overview).
-
----
-
-## File Structure
-
-```
-template-mastra-base/
-├── src/
-│   ├── lib/
-│   │   └── env.ts                  # Zod-validated env loader — crashes on bad config
-│   └── mastra/
-│       ├── index.ts                # Entry point: env → AIMock → Mastra instance
-│       ├── agents/
-│       │   └── _example.ts         # leadIntake agent — copy this for new agents
-│       ├── lib/
-│       │   ├── aimock.ts           # Routes LLM calls to AIMock when USE_AIMOCK=true
-│       │   └── supabase.ts         # Supabase client factory (anon / service / user-scoped)
-│       ├── scorers/
-│       │   ├── _example.scorers.ts # hallucination + completeness + urgency scorers
-│       │   └── datasets/
-│       │       └── _example.json   # Eval dataset — 5 cases with thresholds
-│       ├── tools/                  # Shared tools (inline tools live in agent files)
-│       └── workflows/              # Mastra workflows
-├── scripts/
-│   └── eval.ts                     # Offline CI eval gate — exits 0/1 based on thresholds
-├── prompts/
-│   ├── README.md                   # Index of agent-building prompts
-│   └── build-agent.md              # Parameterized prompt for adding a new agent
-├── .github/
-│   └── workflows/
-│       └── ci.yml                  # typecheck → build + eval (parallel) → docker
-├── Dockerfile                      # Multi-stage, node:22-slim runtime
-├── docker-compose.yml              # Production compose
-├── compose.dev.yml                 # Dev compose override
-├── .env.example                    # All required env vars with comments
-└── AGENTS.md                       # Conventions for AI coding agents
-```
-
----
-
-## Scripts
+### Scripts
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Start Mastra Studio at localhost:4111 |
-| `npm run build` | Bundle for production (output → `.mastra/output/`) |
-| `npm run start` | Start production server (no Studio) |
-| `npm run eval` | Run offline eval gate against all cases in the dataset |
-| `npm run typecheck` | TypeScript type check (zero-emit) |
+| `npm run dev` | Dev server + Studio on :4111 (long-running) |
+| `npm run build` | Production bundle in `.mastra/output/` |
+| `npm run start` | Run the production bundle |
+| `npm run typecheck` | `tsc --noEmit` over `src/` and `scripts/` |
+| `npm run eval` | Eval gate over the dataset; exits 0 on pass, 1 on fail |
 | `npm run score:list` | List registered scorers |
 
----
-
-## Adding a New Agent
-
-1. Copy `src/mastra/agents/_example.ts` → `src/mastra/agents/my-agent.ts`
-2. Rename the agent, update `id`, `instructions`, `model`, tools, and output schema
-3. Register it in `src/mastra/index.ts` under `agents:`
-4. Add eval cases to a new dataset file in `src/mastra/scorers/datasets/`
-5. Use `prompts/build-agent.md` with Claude Code to generate a complete agent from a description
-
----
-
-## Running Evals
+### Evals
 
 ```bash
-# Against live Anthropic API
-npm run eval
+# Free and deterministic: AIMock answers from fixtures/lead-intake.json
+npx -y -p @copilotkit/aimock aimock -c aimock.json   # terminal 1
+USE_AIMOCK=true npm run eval                         # terminal 2
 
-# Against AIMock (deterministic, no API cost)
-npx @copilotkit/aimock --config aimock.json &
-USE_AIMOCK=true npm run eval
+# Against the real provider for MODEL (this bills your key)
+npm run eval
 
 # Custom dataset
 node --env-file=.env --import tsx/esm scripts/eval.ts path/to/dataset.json
 ```
 
----
+AIMock intercepts all three providers, because Mastra's model router reads `<PROVIDER>_BASE_URL` on every call and `configureAIMock()` sets those variables. Under AIMock the LLM-judged scorers report `n/a` and are skipped. The field checks still gate the run. CI runs this path.
 
-## Docker
+### Docker
 
 ```bash
-# Build
 docker build -t my-agent:latest .
-
-# Run
-docker compose up -d
-
-# Health check
+docker compose up -d          # app + a Dolt sql-server; set DOLT_PASSWORD in .env
 curl http://localhost:4111/health
 ```
 
-> **Local Supabase note**: Docker containers can't reach `127.0.0.1` on the host. Set `SUPABASE_DB_URL` to use `host.docker.internal` instead when running via Docker Desktop locally.
+Inside a container, a blank `TURSO_DATABASE_URL` writes `mastra.db` to the container's filesystem, which is lost when the container is recreated. For anything that must persist, set a Turso Cloud URL and token, or mount a volume and point `TURSO_DATABASE_URL` at it.
 
----
+## Customization
 
-## Deployment Notes
+### Switch the model or provider
 
-### Docker image size
+Set `MODEL` in `.env`, and set that provider's key:
 
-The production image is ~676MB. This is larger than typical Node.js Docker images because:
+```bash
+MODEL=openai/gpt-5.5
+OPENAI_API_KEY=sk-...
+```
 
-- The base is `node:22-slim` (Debian, glibc) instead of `node:22-alpine` (musl)
-- DuckDB ships native binaries that segfault on musl libc, even with `gcompat`
-- DuckDB is required by `@mastra/observability` for trace storage
+Any provider the Mastra model router supports works. If one agent needs its own model, hard-code a router string on that agent only.
 
-If you need a smaller image, the path is to swap DuckDB for `LibSQLStore` in the observability domain (see `src/mastra/index.ts`). Trade-off: slower trace queries in Mastra Studio, especially under load.
+### Add an agent
 
-For typical VPS deployments (Hetzner, DigitalOcean, etc.) the 676MB size is not a problem — pulls take seconds and storage is cheap. Only optimize if you're targeting Lambda, Cloud Run cold starts, or memory-constrained environments under 1GB.
+1. Copy `src/mastra/agents/_example.ts` to `src/mastra/agents/my-agent.ts`. Change `id`, `name`, `description`, `instructions`, the tools and the output schema.
+2. Register the agent in `src/mastra/index.ts`, both under `agents` on the `Mastra` instance and under `agents` on the `MCPServer`. The MCP server won't start if an agent has no `description`.
+3. Add a dataset in `src/mastra/scorers/datasets/`: at least 5 cases, including one anti-hallucination case. Add matching AIMock fixtures.
+4. Or let an AI assistant do it: fill in `prompts/build-agent.md` and give it to Claude Code.
 
----
+### Add a workflow
 
-## Common Gotchas
+Copy `src/mastra/workflows/lead-routing.ts`. Steps are built with `createStep` and Zod input/output schemas, and chained with `createWorkflow(...).then(...).commit()`. Register the workflow under `workflows` in `src/mastra/index.ts`. Inside a step, resolve agents with `mastra.getAgent('<key>')`, so the registered agent with its memory and observability is the one that runs.
+
+### Storage
+
+- **Turso Cloud**: set `TURSO_DATABASE_URL=libsql://…` and `TURSO_AUTH_TOKEN`. Use it for anything serverless, where the filesystem is ephemeral. Turso makes one database per agent or per tenant cheap.
+- **ClickHouse for traces**: set `CLICKHOUSE_*`. A `MastraCompositeStore` then sends only the observability domain to ClickHouse, and everything else stays in libSQL.
+- **Hosted embeddings**: set `EMBEDDING_MODEL` (e.g. `openai/text-embedding-3-small`) when the runtime can't load fastembed's native ONNX binding (serverless or edge). Vectors stay in libSQL.
+
+### Auth
+
+Set `MASTRA_JWT_SECRET` (at least 32 characters) to put the API and Studio behind HS256 Bearer JWTs. Mint a token:
+
+```bash
+node -e "import('jsonwebtoken').then(j=>console.log(j.default.sign({sub:'client'},process.env.MASTRA_JWT_SECRET)))"
+```
+
+To use it in Studio, go to Settings → Headers and add `Authorization: Bearer <jwt>`.
+
+### Safety processors
+
+`src/mastra/lib/processors.ts` turns on `UnicodeNormalizer` and `TokenLimiter` for every agent. The model-backed guardrails (moderation, prompt injection, PII and others) are opt-in, because each one adds an LLM call per request.
+
+### Deployment notes
+
+- **Docker image**: the image is built on `node:22-slim` (Debian, glibc), not Alpine, because fastembed's `onnxruntime-node` binding won't load on musl. That puts the image at roughly 676MB. To slim it down, set `EMBEDDING_MODEL` to a hosted embedder first.
+- **Serverless**: `@mastra/deployer-vercel`, `-netlify` and `-cloudflare` are installed as dev dependencies. On those platforms use Turso Cloud and a hosted `EMBEDDING_MODEL`. A local `file:` DB and fastembed both assume a persistent Node host.
+
+### Common gotchas
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Invalid environment variables` on boot | Missing or malformed `.env` | Check each var listed in the error against `.env.example` |
-| `ECONNREFUSED 127.0.0.1:54322` | Local Supabase not running | `npx supabase start` |
-| Docker container crashes (SIGSEGV) | DuckDB requires glibc, not musl | Use `node:22-slim`, not `node:22-alpine` — see Deployment Notes |
-| `ECONNREFUSED` inside Docker | `127.0.0.1` in DB URL | Replace with `host.docker.internal` |
-| Agent not listed in Studio | Not registered in `mastra.agents` | Add to `src/mastra/index.ts` |
-| Storage init error about missing `id` | `PostgresStore`/`LibSQLStore` requires `id` field | Pass `id: 'mastra-storage'` to the constructor |
-| PostHog telemetry noise in restricted networks | Mastra runtime phones home on startup | Set `MASTRA_TELEMETRY_DISABLED=1` in `.env` |
-| DB connection errors at scale | Direct Supabase connection has limited slots | Use the **session pooler** URL from Supabase dashboard (Project Settings → Database → Connection string → Session pooler) |
-| Pino transport error in Docker | `pino-pretty` missing from production deps | Ensure it's in `dependencies`, not `devDependencies`, in any packages you add |
+| `Invalid environment variables` on boot | Missing or malformed `.env` | Fix each variable the error lists. Compare with `.env.example` |
+| `At least one LLM provider key required` | No provider key set | Set the key for `MODEL`'s provider, or `USE_AIMOCK=true` |
+| `Could not find API key process.env.X for model id …` | `MODEL` names a provider whose key isn't set | Set that provider's key, or change `MODEL` |
+| MCP client gets `-32022 Unsupported protocol version` | The client speaks an MCP revision older than 2026-07-28 | Use a 2026-07-28 client (see [MCP](#mcp)) |
+| Data gone after a redeploy | `file:` DB on an ephemeral filesystem | Use Turso Cloud, or mount a volume |
+| Container won't load native modules | musl-based image | Stay on `node:22-slim` |
+| Agent not listed in Studio | Not registered on the Mastra instance | Add it to `agents` in `src/mastra/index.ts` |
+| Storage init error about a missing `id` | `LibSQLStore` requires `id` | Pass `id: 'mastra-storage'` |
+| PostHog telemetry noise on locked-down networks | Mastra phones home at startup | `MASTRA_TELEMETRY_DISABLED=1` |
+| `npm install` fails downloading onnxruntime | Network blocks the ONNX binary download | `ONNXRUNTIME_NODE_INSTALL=skip npm install`, then set a hosted `EMBEDDING_MODEL` |
 
----
+### For AI coding agents
 
-## Environment Variables
-
-See `.env.example` for the full list with comments. Minimum required:
-
-- `APP_SECRET` — min 32 chars, generate with `openssl rand -hex 32`
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`
-- At least one of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`
-
----
-
-## For AI Coding Agents
-
-See `AGENTS.md` for conventions, boot order, import rules, and things to never do.
+`AGENTS.md` has the conventions: boot order (env → AIMock → Mastra), import rules, env rules, agent/workflow/scorer layout, storage, and the list of things never to do. `CLAUDE.md` gives Claude Code a short version and points to it.

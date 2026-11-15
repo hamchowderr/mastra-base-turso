@@ -60,7 +60,11 @@ const datasetPath = process.argv[2]
   ?? resolve(process.cwd(), 'src/mastra/scorers/datasets/_example.json');
 
 const dataset: Dataset = JSON.parse(readFileSync(datasetPath, 'utf-8'));
-const agent = mastra.getAgent(dataset.agentId);
+// The dataset names its agent by string, so look it up in the untyped record
+// rather than through getAgent(), whose key is narrowed to registered names.
+const agents: Record<string, ReturnType<typeof mastra.listAgents>[keyof ReturnType<typeof mastra.listAgents>]> =
+  mastra.listAgents();
+const agent = agents[dataset.agentId];
 
 if (!agent) {
   console.error(red(`Agent "${dataset.agentId}" not found in Mastra instance.`));
@@ -86,14 +90,10 @@ for (const evalCase of dataset.cases) {
   try {
     // returnScorerData triggers inline scorer LLM calls; skip under AIMock to avoid
     // fixture schema mismatches — scores will be n/a but field checks still gate CI.
-    const generateOpts = env.USE_AIMOCK
-      ? { structuredOutput: { schema: LeadSchema } }
-      : { structuredOutput: { schema: LeadSchema }, returnScorerData: true };
-
-    const result = await agent.generate(
-      [{ role: 'user', content: evalCase.input }],
-      generateOpts as Parameters<typeof agent.generate>[1],
-    );
+    const result = await agent.generate([{ role: 'user', content: evalCase.input }], {
+      structuredOutput: { schema: LeadSchema },
+      returnScorerData: !env.USE_AIMOCK,
+    });
 
     object = (result.object as Record<string, unknown>) ?? {};
     scoringInput = (result as any).scoringData?.input;
@@ -118,9 +118,9 @@ for (const evalCase of dataset.cases) {
         promptAlignmentScorer.run({ input: scoringInput as any, output: scoringOutput as any }),
         urgencyScorer.run({ input: scoringInput as any, output: scoringOutput as any }),
       ]);
-      scores.hallucination = hallResult.score;
-      scores.promptAlignment = alignResult.score;
-      scores.urgency = urgResult.score;
+      scores.hallucination = hallResult.score ?? null;
+      scores.promptAlignment = alignResult.score ?? null;
+      scores.urgency = urgResult.score ?? null;
     } catch (err) {
       // Scorer errors don't fail the case — log and continue
       console.error(yellow(`\n    ⚠ scorer error: ${err}`));
