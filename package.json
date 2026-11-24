@@ -41,7 +41,7 @@
     "@mastra/deployer-vercel": "^1.2.42",
     "@types/node": "^25.6.0",
     "mastra": "^1.39.0",
-    "supabase": "^2.98.0",
+    "supabase": "^2.122.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   }
